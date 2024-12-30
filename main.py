@@ -193,7 +193,7 @@ def download_file(url, filename, folder_path=None, overwrite=False):
 def search_umu_database(search_string):
     """
     Searches the CSV, downloading if not found.
-    If no results found, searches Steam using python-steam-api.
+    If no results found, searches Steam.
     """
     filename = "umu-database.csv"
     try:
@@ -202,25 +202,24 @@ def search_umu_database(search_string):
         print(f"File not found. Attempting download")
         if download_file("https://raw.githubusercontent.com/Open-Wine-Components/umu-database/refs/heads/main/umu-database.csv", "umu-database.csv"):
             try:
-                df = pd.read_csv(filename)  # Try to read the file again
+                df = pd.read_csv(filename)
             except pd.errors.ParserError:
-                return f"Error: Could not parse {filename} after download. Check if it's a valid CSV file."
+                return f"Error: Could not parse {filename} after download."
         else:
-            return f"Error: Failed to download {filename} from: {download_url}"
+            return f"Error: Failed to download {filename}."
     except pd.errors.ParserError:
-        return f"Error: Could not parse {filename}. Check if it's a valid CSV file."
+        return f"Error: Could not parse {filename}."
 
-    if 'TITLE' not in df.columns or 'STORE' not in df.columns or 'UMU_ID' not in df.columns:
-        return "Error: The CSV file must contain columns named 'TITLE', 'STORE', and 'UMU_ID'."
+    if not all(col in df.columns for col in ['TITLE', 'STORE', 'UMU_ID']):
+        return "Error: The CSV must contain columns 'TITLE', 'STORE', and 'UMU_ID'."
 
     mask = df['TITLE'].str.contains(search_string, case=False, na=False)
     results = df.loc[mask, ['TITLE', 'STORE', 'UMU_ID']]
 
-    # Check if results found in CSV
     if results.empty:
         print(f"No results found in UMU database. Searching Steam...")
         steam_results = search_steam(search_string)
-        if steam_results:
+        if not steam_results.empty:  # Correct check: check if DataFrame is NOT empty
             return steam_results
         else:
             return f"No results found in UMU database or Steam for: {search_string}"
@@ -229,36 +228,45 @@ def search_umu_database(search_string):
 
 def search_steam(search_string):
     """
-    Searches Steam for the given search string using python-steam-api.
-    Returns results in the same format as the CSV table.
-    Loads the config inside this function
+    Searches Steam and returns a Pandas DataFrame (empty if no results or error).
     """
     config = configparser.ConfigParser()
     config.optionxform = str
     config.read('config.ini')
 
     try:
-        api_key = config['keys']['steam-api']
-        steam = Steam(api_key=api_key)
+        api_key = config['Keys']['steam-api']
+        steam = Steam(api_key)
     except KeyError:
-        print("Error: 'steam-api' key not found in config.ini or the config file is not found.")
-        return None
+        print("Error: 'steam-api' key not found in config.ini.")
+        return pd.DataFrame()  # Return empty DataFrame on config error
     except Exception as e:
         print(f"Error initializing Steam API: {e}")
-        return None
+        return pd.DataFrame()  # Return empty DataFrame on Steam init error
 
     try:
-        response = steam.apps.search_games(term=search_string)
-        if response.get("results_available"):
-            steam_games = []
-            for game in response.get("results"):
-                steam_games.append({"title": game.get("name"), "store": "Steam", "UMU_ID": f"umu-{game.get('appid')}"})
-            return steam_games
-        else:
-            return None  # No results found on Steam
+        response = steam.apps.search_games(search_string)
+        if response and response.get("apps"):
+            apps = response.get("apps")
+            if apps:
+                steam_games_list = []
+                for game in apps:
+                    game_id = game.get('id')
+                    if isinstance(game_id, list) and game_id:  # Check if it's a non-empty list
+                        game_id = game_id[0]  # Extract the integer from the list
+                    elif not isinstance(game_id, int):
+                        print(f"Unexpected game ID format: {game_id}. Skipping game")
+                        continue
+                    steam_games_list.append({
+                        "TITLE": game.get("name"),
+                        "STORE": "Steam",
+                        "UMU_ID": f"umu-{game_id}"
+                    })
+                return pd.DataFrame(steam_games_list)
+        return pd.DataFrame()
     except Exception as e:
-        print(f"Error: Failed to access Steam API. {e}")
-        return None  # Indicate failure to access Steam
+        print(f"Error: Failed to access Steam API: {e}")
+        return pd.DataFrame()
 
 def run_installer(main_window):
     """Runs the installer, prompting for a file and using either a custom prefix or the global prefix from config.ini."""
