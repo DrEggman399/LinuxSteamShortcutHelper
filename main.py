@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QCheckBox, QLabel, QFileDialog, QSpacerItem, QSizePolicy)
 from PyQt6.QtGui import QStandardItemModel, QStandardItem
 from PyQt6.QtCore import Qt
+from steam_web_api import Steam
 
 def get_home_directory():
     
@@ -81,6 +82,9 @@ def set_default_config():
     config['LastUpdated'] = {
         'umu-launcher': '0',
         'umu-database': '0'
+    }
+    config['Keys'] = {
+        'steam-api': '0'
     }
 
     try:
@@ -187,7 +191,10 @@ def download_file(url, filename, folder_path=None, overwrite=False):
         return False
 
 def search_umu_database(search_string):
-    """Searches the CSV, downloading if not found."""
+    """
+    Searches the CSV, downloading if not found.
+    If no results found, searches Steam using python-steam-api.
+    """
     filename = "umu-database.csv"
     try:
         df = pd.read_csv(filename)
@@ -195,7 +202,7 @@ def search_umu_database(search_string):
         print(f"File not found. Attempting download")
         if download_file("https://raw.githubusercontent.com/Open-Wine-Components/umu-database/refs/heads/main/umu-database.csv", "umu-database.csv"):
             try:
-                df = pd.read_csv(filename) #Try to read the file again
+                df = pd.read_csv(filename)  # Try to read the file again
             except pd.errors.ParserError:
                 return f"Error: Could not parse {filename} after download. Check if it's a valid CSV file."
         else:
@@ -208,7 +215,50 @@ def search_umu_database(search_string):
 
     mask = df['TITLE'].str.contains(search_string, case=False, na=False)
     results = df.loc[mask, ['TITLE', 'STORE', 'UMU_ID']]
-    return results
+
+    # Check if results found in CSV
+    if results.empty:
+        print(f"No results found in UMU database. Searching Steam...")
+        steam_results = search_steam(search_string)
+        if steam_results:
+            return steam_results
+        else:
+            return f"No results found in UMU database or Steam for: {search_string}"
+    else:
+        return results
+
+def search_steam(search_string):
+    """
+    Searches Steam for the given search string using python-steam-api.
+    Returns results in the same format as the CSV table.
+    Loads the config inside this function
+    """
+    config = configparser.ConfigParser()
+    config.optionxform = str
+    config.read('config.ini')
+
+    try:
+        api_key = config['keys']['steam-api']
+        steam = Steam(api_key=api_key)
+    except KeyError:
+        print("Error: 'steam-api' key not found in config.ini or the config file is not found.")
+        return None
+    except Exception as e:
+        print(f"Error initializing Steam API: {e}")
+        return None
+
+    try:
+        response = steam.apps.search_games(term=search_string)
+        if response.get("results_available"):
+            steam_games = []
+            for game in response.get("results"):
+                steam_games.append({"title": game.get("name"), "store": "Steam", "UMU_ID": f"umu-{game.get('appid')}"})
+            return steam_games
+        else:
+            return None  # No results found on Steam
+    except Exception as e:
+        print(f"Error: Failed to access Steam API. {e}")
+        return None  # Indicate failure to access Steam
 
 def run_installer(main_window):
     """Runs the installer, prompting for a file and using either a custom prefix or the global prefix from config.ini."""
