@@ -7,6 +7,7 @@ import configparser
 import requests
 import csv
 import pandas as pd
+import toml
 
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QLineEdit, QPushButton, QTreeView, QMessageBox,
@@ -480,37 +481,62 @@ def save_launch_script(main_window):
 
     script_path = os.path.join(scripts_dir, script_filename)
 
-    # Prompt user for file selection
-    file_path, _ = QFileDialog.getOpenFileName(main_window, "Select Game Executable")
-    if not file_path:
+    # Prompt user for game executable selection
+    game_executable_path, _ = QFileDialog.getOpenFileName(main_window, "Select Game Executable")
+    if not game_executable_path:
         QMessageBox.warning(main_window, "No File Selected", "No file selected. File creation cancelled.")
         return False
 
-    # Construct the command (now as a single string)
+    toml_enabled = config.has_section('Behavior') and config['Behavior'].getboolean('preferTOML', fallback=False)
+
+    prefix_command = ""
+    prefix_path = None
+    if main_window.use_custom_prefix_checkbox.isChecked():
+        prefix_path = main_window.custom_prefix_input.text()
+        prefix_command = f"WINEPREFIX='{prefix_path}'"
+    elif global_prefix_dir != 'default':
+        prefix_path = global_prefix_dir
+        prefix_command = f"WINEPREFIX='{prefix_path}'"
+
+    toml_data = {}
+
+    if toml_enabled:
+        toml_data['umu'] = {}
+        if prefix_path:
+            toml_data['umu']['WINEPREFIX'] = prefix_path
+        if umu_id:
+            toml_data['umu']['GAMEID'] = umu_id
+        if main_window.pass_store_value_checkbox.isChecked() and store_value:
+            toml_data['umu']['STORE'] = store_value
+        toml_data['umu']['exe'] = game_executable_path
+
     command = []
 
-    if main_window.use_custom_prefix_checkbox.isChecked():
-        command.append(f"WINEPREFIX='{custom_prefix_dir}'")
-    elif global_prefix_dir != 'default':
-        command.append(f"WINEPREFIX='{global_prefix_dir}'")
-
-    if umu_id:
-        command.append(f"GAMEID='{umu_id}'")
-        
-    if main_window.pass_store_value_checkbox.isChecked() and store_value:
-        command.append(f"STORE='{store_value}'")
+    if prefix_command:
+        command.append(prefix_command)
 
     umu_run_path = os.path.join(umu_binary_dir, "umu-run")
-    command.append(f"'{umu_run_path}'") #Quote the path
+    toml_file_name = main_window.launch_script_name_input.text() + ".toml"
+    toml_file_path = os.path.join(scripts_dir, toml_file_name) #Changed to scripts_dir
 
-    command.append(f"'{file_path}'")
+    if toml_enabled:
+        try:
+            with open(toml_file_path, 'w') as f:
+                toml.dump(toml_data, f)
+            command.append(f"'{umu_run_path}' --config '{toml_file_path}'") #Use full path
+        except OSError as e:
+            QMessageBox.critical(main_window, "Error Saving TOML", f"Failed to save TOML file: {e}")
+            return False
+    else:
+        command.append(f"'{umu_run_path}'")
+        command.append(f"'{game_executable_path}'")
 
-    command_string = " ".join(command) #Join the command for writing to the file
+    command_string = " ".join(command)
 
     try:
         with open(script_path, 'w') as script_file:
-            script_file.write(f"#!/bin/bash\n{command_string}") #Add shebang and write the command
-        os.chmod(script_path, 0o755) #Make the script executable
+            script_file.write(f"#!/bin/bash\n{command_string}")
+        os.chmod(script_path, 0o755)
         QMessageBox.information(main_window, "Script Saved", f"Launch script saved to: {script_path}")
     except OSError as e:
         QMessageBox.critical(main_window, "Error Saving Script", f"Failed to save script: {e}")
@@ -518,11 +544,12 @@ def save_launch_script(main_window):
 
     return True
 
+
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("UMU Database Search")
+        self.setWindowTitle("Linux Steam Shortcut Helper")
 
         main_layout = QVBoxLayout()
 
