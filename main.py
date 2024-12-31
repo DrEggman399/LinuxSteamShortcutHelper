@@ -360,7 +360,7 @@ def run_installer(main_window):
     if umu_id:
         my_env["GAMEID"] = umu_id
     else:
-        my_env["GAMEID"] = 0
+        my_env["GAMEID"] = '0'
 
     # Add STORE environment variable if checkbox is checked
     if main_window.pass_store_value_checkbox.isChecked() and store_value:
@@ -490,6 +490,9 @@ def save_launch_script(main_window):
 
     toml_enabled = config.has_section('Behavior') and config['Behavior'].getboolean('preferTOML', fallback=False)
 
+    command = []
+    toml_data = {}
+
     prefix_command = ""
     prefix_path = None
     if main_window.use_custom_prefix_checkbox.isChecked():
@@ -499,8 +502,8 @@ def save_launch_script(main_window):
         prefix_path = global_prefix_dir
         prefix_command = f"WINEPREFIX='{prefix_path}'"
 
-    toml_data = {}
-
+    umu_run_path = os.path.join(umu_binary_dir, "umu-run")
+    
     if toml_enabled:
         toml_data['umu'] = {}
         if prefix_path:
@@ -508,19 +511,11 @@ def save_launch_script(main_window):
         if umu_id:
             toml_data['umu']['game_id'] = umu_id
         if main_window.pass_store_value_checkbox.isChecked() and store_value:
-            toml_data['umu']['STORE'] = store_value
+            toml_data['umu']['store'] = store_value
         toml_data['umu']['exe'] = game_executable_path
-
-    command = []
-
-    if prefix_command:
-        command.append(prefix_command)
-
-    umu_run_path = os.path.join(umu_binary_dir, "umu-run")
-    toml_file_name = main_window.launch_script_name_input.text() + ".toml"
-    toml_file_path = os.path.join(scripts_dir, toml_file_name)
-
-    if toml_enabled:
+        toml_data['umu']['proton'] = 'GE-Proton' #TODO add user custom proton version
+        toml_file_name = main_window.launch_script_name_input.text() + ".toml"
+        toml_file_path = os.path.join(scripts_dir, toml_file_name)
         try:
             with open(toml_file_path, 'w') as f:
                 toml.dump(toml_data, f)
@@ -529,6 +524,11 @@ def save_launch_script(main_window):
             QMessageBox.critical(main_window, "Error Saving TOML", f"Failed to save TOML file: {e}")
             return False
     else:
+        command.append(f"GAMEID={umu_id}")
+        if prefix_command:
+            command.append(prefix_command)
+        if main_window.pass_store_value_checkbox.isChecked() and store_value:
+            command.append(f"STORE='{store_value}'")
         command.append(f"'{umu_run_path}'")
         command.append(f"'{game_executable_path}'")
 
