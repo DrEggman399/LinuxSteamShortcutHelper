@@ -80,13 +80,14 @@ def set_default_config():
     config['Behavior'] = {
         'preferTOML': 'false' 
     }
+    config['Keys'] = {
+        'steam-api': '0'
+    }
     config['LastUpdated'] = {
         'umu-launcher': '0',
         'umu-database': '0'
     }
-    config['Keys'] = {
-        'steam-api': '0'
-    }
+
 
     try:
         with open(config_file_path, 'w') as configFile:
@@ -275,7 +276,7 @@ def run_installer(main_window):
     # Check if an item is selected in the tree view
     selected_indexes = main_window.tree_view.selectionModel().selectedIndexes()
     if not selected_indexes:
-        reply = QMessageBox.question(main_window, "No Item Selected", "No UMU item selected. Do you want to proceed with the installation anyway?",
+        reply = QMessageBox.question(main_window, "No Item Selected", "No game selected. Do you want to proceed with the installation anyway?",
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.No:
             return False
@@ -396,7 +397,7 @@ def save_launch_script(main_window):
     # Get UMU ID (same as in run_installer)
     selected_indexes = main_window.tree_view.selectionModel().selectedIndexes()
     if not selected_indexes:
-        reply = QMessageBox.question(main_window, "No Item Selected", "No UMU item selected. Do you want to proceed with the installation anyway?",
+        reply = QMessageBox.question(main_window, "No Item Selected", "No game selected. Do you want to proceed with the installation anyway?",
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.No:
             return False
@@ -503,9 +504,9 @@ def save_launch_script(main_window):
     if toml_enabled:
         toml_data['umu'] = {}
         if prefix_path:
-            toml_data['umu']['WINEPREFIX'] = prefix_path
+            toml_data['umu']['prefix'] = prefix_path
         if umu_id:
-            toml_data['umu']['GAMEID'] = umu_id
+            toml_data['umu']['game_id'] = umu_id
         if main_window.pass_store_value_checkbox.isChecked() and store_value:
             toml_data['umu']['STORE'] = store_value
         toml_data['umu']['exe'] = game_executable_path
@@ -517,13 +518,13 @@ def save_launch_script(main_window):
 
     umu_run_path = os.path.join(umu_binary_dir, "umu-run")
     toml_file_name = main_window.launch_script_name_input.text() + ".toml"
-    toml_file_path = os.path.join(scripts_dir, toml_file_name) #Changed to scripts_dir
+    toml_file_path = os.path.join(scripts_dir, toml_file_name)
 
     if toml_enabled:
         try:
             with open(toml_file_path, 'w') as f:
                 toml.dump(toml_data, f)
-            command.append(f"'{umu_run_path}' --config '{toml_file_path}'") #Use full path
+            command.append(f"'{umu_run_path}' --config '{toml_file_path}'")
         except OSError as e:
             QMessageBox.critical(main_window, "Error Saving TOML", f"Failed to save TOML file: {e}")
             return False
@@ -537,14 +538,27 @@ def save_launch_script(main_window):
         with open(script_path, 'w') as script_file:
             script_file.write(f"#!/bin/bash\n{command_string}")
         os.chmod(script_path, 0o755)
-        QMessageBox.information(main_window, "Script Saved", f"Launch script saved to: {script_path}")
+
+        # Build message for the popup
+        message = f"Launch script saved to: {script_path}\n\n"
+        if umu_id:
+            message += f"Game ID: {umu_id}\n"
+        if store_value and main_window.pass_store_value_checkbox.isChecked():
+            message += f"Store Value: {store_value}\n"
+        message += f"Game Executable: {game_executable_path}\n"
+        if prefix_path:
+            message += f"Wine Prefix: {prefix_path}\n"
+        if toml_enabled:
+            message += f"TOML config saved to: {toml_file_path}\n"
+
+        QMessageBox.information(main_window, "Script Saved", message)
+
     except OSError as e:
         QMessageBox.critical(main_window, "Error Saving Script", f"Failed to save script: {e}")
         return False
 
     return True
-
-
+    
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
@@ -556,6 +570,8 @@ class MainWindow(QWidget):
         # Search layout
         search_layout = QHBoxLayout()
         self.search_bar = QLineEdit()
+        self.search_bar.setPlaceholderText("Game Name")
+        self.search_bar.returnPressed.connect(self.perform_search) # Connect Enter key
         self.search_button = QPushButton("Search")
         self.search_button.clicked.connect(self.perform_search)
         search_layout.addWidget(self.search_bar)
@@ -600,12 +616,13 @@ class MainWindow(QWidget):
         # Launch Script Name
         self.launch_script_name_label = QLabel("Launch Script Name:")
         self.launch_script_name_input = QLineEdit()
+        self.launch_script_name_label.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)  # Label stays at minimum width
+        self.launch_script_name_input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed) # Input expands horizontally
         launch_script_layout = QHBoxLayout()
         launch_script_layout.addWidget(self.launch_script_name_label)
         launch_script_layout.addWidget(self.launch_script_name_input)
-        launch_script_layout.addItem(QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
-        main_layout.addLayout(launch_script_layout)
 
+        main_layout.addLayout(launch_script_layout)
         # Connect tree view selection changed signal
         self.tree_view.selectionModel().selectionChanged.connect(self.update_launch_script_name)
 
