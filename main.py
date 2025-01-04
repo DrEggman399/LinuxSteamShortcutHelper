@@ -9,11 +9,9 @@ import csv
 import pandas as pd
 import toml
 
-from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
-                             QLineEdit, QPushButton, QTreeView, QMessageBox,
-                             QCheckBox, QLabel, QFileDialog, QSpacerItem, QSizePolicy)
-from PyQt6.QtGui import QStandardItemModel, QStandardItem
-from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import *
+from PyQt6.QtGui import *
+from PyQt6.QtCore import *
 from steam_web_api import Steam
 
 def get_home_directory():
@@ -217,16 +215,7 @@ def search_umu_database(search_string):
 
     mask = df['TITLE'].str.contains(search_string, case=False, na=False)
     results = df.loc[mask, ['TITLE', 'STORE', 'UMU_ID']]
-
-    if results.empty:
-        print(f"No results found in UMU database. Searching Steam...")
-        steam_results = search_steam(search_string)
-        if not steam_results.empty:  # Correct check: check if DataFrame is NOT empty
-            return steam_results
-        else:
-            return f"No results found in UMU database or Steam for: {search_string}"
-    else:
-        return results
+    return results
 
 def search_steam(search_string):
     """
@@ -371,11 +360,12 @@ def run_installer(main_window):
         return False
 
     command = [umu_run_path, file_path] #Command is now just the executable and the file path
+    command_string = " ".join(command)
 
     # Run the command
     try:
         print("Running command:", command)  # Print the command for debugging
-        subprocess.run(command, check=True, env=my_env)  # Pass the modified environment
+        subprocess.run(command_string, check=True, env=my_env, shell=True)  # Pass the modified environment
         QMessageBox.information(main_window, "Installer", "Installation complete.")
     except subprocess.CalledProcessError as e:
         QMessageBox.critical(main_window, "Installation Error", f"Installation failed: {e}")
@@ -567,21 +557,50 @@ class MainWindow(QWidget):
 
         main_layout = QVBoxLayout()
 
-        # Search layout
+        # Search layout (for UMU) - MOVED TO TOP
         search_layout = QHBoxLayout()
         self.search_bar = QLineEdit()
         self.search_bar.setPlaceholderText("Game Name")
-        self.search_bar.returnPressed.connect(self.perform_search) # Connect Enter key
+        self.search_bar.returnPressed.connect(self.perform_search)
         self.search_button = QPushButton("Search")
         self.search_button.clicked.connect(self.perform_search)
         search_layout.addWidget(self.search_bar)
         search_layout.addWidget(self.search_button)
         main_layout.addLayout(search_layout)
 
-        self.tree_view = QTreeView()
-        self.model = QStandardItemModel()
-        self.tree_view.setModel(self.model)
-        main_layout.addWidget(self.tree_view)
+        # UMU Database Results section
+        umu_title_label = QLabel("UMU Database Results")
+        font = QFont("Arial", 12)
+        font.setWeight(QFont.Weight.Bold) 
+        umu_title_label.setFont(font)
+        main_layout.addWidget(umu_title_label)
+
+        self.umu_tree_view = QTreeView()
+        self.umu_model = QStandardItemModel()
+        self.umu_tree_view.setModel(self.umu_model)
+        main_layout.addWidget(self.umu_tree_view)
+
+        # Steam Search Results section
+        steam_title_label = QLabel("Steam Search Results")
+        font = QFont("Arial", 12)
+        font.setWeight(QFont.Weight.Bold)
+        steam_title_label.setFont(font)
+        main_layout.addWidget(steam_title_label)
+
+        self.steam_tree_view = QTreeView()
+        self.steam_model = QStandardItemModel()
+        self.steam_tree_view.setModel(self.steam_model)
+        main_layout.addWidget(self.steam_tree_view)
+
+        self.selection_clearing = False #Flag to prevent recursion
+
+        # Connect selection changed signals with mutual exclusion
+        self.umu_tree_view.selectionModel().selectionChanged.connect(
+            lambda selected, deselected: self.on_tree_view_selection_changed(self.umu_tree_view, selected, deselected)
+        )
+        self.steam_tree_view.selectionModel().selectionChanged.connect(
+            lambda selected, deselected: self.on_tree_view_selection_changed(self.steam_tree_view, selected, deselected)
+        )
 
         # Pass Store Value Checkbox
         self.pass_store_value_checkbox = QCheckBox()
@@ -623,8 +642,9 @@ class MainWindow(QWidget):
         launch_script_layout.addWidget(self.launch_script_name_input)
 
         main_layout.addLayout(launch_script_layout)
-        # Connect tree view selection changed signal
-        self.tree_view.selectionModel().selectionChanged.connect(self.update_launch_script_name)
+
+        self.umu_tree_view.selectionModel().selectionChanged.connect(lambda: self.update_launch_script_name("umu"))
+        self.steam_tree_view.selectionModel().selectionChanged.connect(lambda: self.update_launch_script_name("steam"))
 
         # Bottom layout
         bottom_layout = QHBoxLayout()
@@ -638,17 +658,24 @@ class MainWindow(QWidget):
 
         self.setLayout(main_layout)
 
-    def update_launch_script_name(self):
-        selected_indexes = self.tree_view.selectionModel().selectedIndexes()
+    def update_launch_script_name(self, tree_view_type):
+    # Get the selected tree view based on the argument
+        if tree_view_type == "umu":
+            tree_view = self.umu_tree_view
+            model = self.umu_model
+        else:
+            tree_view = self.steam_tree_view
+            model = self.steam_model  # Assuming you have a separate model for steam data
+
+        selected_indexes = tree_view.selectionModel().selectedIndexes()
         if selected_indexes:
             first_index = selected_indexes[0]
             row = first_index.row()
-            model = self.tree_view.model()
-            umu_id_index = model.index(row, 2)  # Assuming UMU ID is in the third column (index 2)
+            umu_id_index = model.index(row, 2)  # Assuming UMU/Steam ID is in the third column (index 2)
             umu_id = model.data(umu_id_index, Qt.ItemDataRole.DisplayRole)
             self.launch_script_name_input.setText(umu_id + ".sh")
         else:
-            self.launch_script_name_input.clear() #Clear the text box if nothing is selected
+            self.launch_script_name_input.clear()  # Clear the text box if nothing is selected
 
 
     def toggle_custom_prefix_widgets(self, state):
@@ -666,38 +693,65 @@ class MainWindow(QWidget):
         QApplication.instance().quit()
 
     def perform_search(self):
-
         search_term = self.search_bar.text()
         if not search_term:
             QMessageBox.warning(self, "Empty Search", "Please enter a search term.")
             return
 
-        results = search_umu_database(search_term)
+        # Perform both searches
+        umu_results = search_umu_database(search_term)
+        steam_results = search_steam(search_term)
 
-        if isinstance(results, str):
+        # Update UMU Tree View
+        self.update_tree_view(self.umu_tree_view, self.umu_model, umu_results)
+
+        # Update Steam Tree View
+        self.update_tree_view(self.steam_tree_view, self.steam_model, steam_results)
+
+
+    def update_tree_view(self, tree_view, model, results):
+        """Helper function to update a given tree view with search results."""
+        model.clear()
+
+        if isinstance(results, str):  # Error handling
             QMessageBox.critical(self, "Search Error", results)
             return
 
-        self.model.clear()
-
         if results.empty:
-            root_node = self.model.invisibleRootItem()
+            root_node = model.invisibleRootItem()
             no_results_item = QStandardItem("No matches found.")
             no_results_item.setFlags(Qt.ItemFlag.NoItemFlags)
             root_node.appendRow(no_results_item)
             return
 
-        self.model.setHorizontalHeaderLabels(results.columns.tolist())
+        model.setHorizontalHeaderLabels(results.columns.tolist())
 
         for _, row in results.iterrows():
             items = [QStandardItem(str(row[col])) for col in results.columns]
             for item in items:
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.model.appendRow(items)
+            model.appendRow(items)
 
-        self.tree_view.resizeColumnToContents(0)
-        self.tree_view.resizeColumnToContents(1)
+        tree_view.resizeColumnToContents(0)
+        tree_view.resizeColumnToContents(1)
 
+    def on_tree_view_selection_changed(self, source_tree_view, selected, deselected):
+        if self.selection_clearing: #If we're already clearing, exit
+            return
+
+        try:
+            self.selection_clearing = True #Set the flag
+            if source_tree_view == self.umu_tree_view:
+                other_tree_view = self.steam_tree_view
+            else:
+                other_tree_view = self.umu_tree_view
+
+            other_tree_view.clearSelection() #Clear the selection of the other tree view
+            self.update_launch_script_name("umu" if source_tree_view == self.umu_tree_view else "steam")
+        finally:
+            self.selection_clearing = False #Ensure flag is always reset
+
+        
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     set_default_config()
