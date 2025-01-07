@@ -11,6 +11,9 @@ import toml
 import vdf
 import glob
 import time
+import hashlib
+import random
+import struct
 
 from PyQt6.QtWidgets import *
 from PyQt6.QtGui import *
@@ -82,7 +85,8 @@ def set_default_config():
         'preferTOML': 'false' 
     }
     config['Keys'] = {
-        'steam-api': '0'
+        'steam-api': '0',
+        'steamgriddb': '0'
     }
     config['LastUpdated'] = {
         'umu-launcher': '0',
@@ -559,17 +563,45 @@ def save_launch_script(main_window):
 
     return True
 
-def add_game_to_steam(game_name, exe_path, start_dir="", icon_path=""):
+def add_game_to_steam(main_window):
     """Adds a non-Steam game shortcut to Steam's shortcuts.vdf file (Linux only)."""
 
+    selected_indexes = None
+    model = None
+
+    if main_window.umu_tree_view.selectionModel().hasSelection():
+        selected_indexes = main_window.umu_tree_view.selectionModel().selectedIndexes()
+        model = main_window.umu_tree_view.model()
+    elif main_window.steam_tree_view.selectionModel().hasSelection():
+        selected_indexes = main_window.steam_tree_view.selectionModel().selectedIndexes()
+        model = main_window.steam_tree_view.model()
+
+    if not selected_indexes or not model:
+        print("No UMU ID selected")
+        QMessageBox.warning(main_window, "No Game Selected", "Please search for and select a game.") #TODO: allow custom game entries
+        return False  # Exit the function immediately
+    else:
+        # Get the first selected index
+        first_index = selected_indexes[0]
+        # Get the row
+        row = first_index.row()
+
+        # Get the game Title (first column, index 0)
+        game_title_index = model.index(row, 0)
+        game_title = model.data(game_title_index, Qt.ItemDataRole.DisplayRole)
+        print(f"UMU ID selected: {umu_id}")
+    
+    
     steam_path = get_steam_path()
     if not steam_path:
         print("Error: Could not find Steam installation.")
+        QMessageBox.warning(main_window, "No Steam Installation Found", "Could not find Steam installation.")
         return
 
     user_id = get_steam_user_id(steam_path)
     if not user_id:
         print("Error: Could not determine Steam user ID.")
+        QMessageBox.warning(main_window, "Unable to Indentify Folder", "Could not determine Steam user ID.")
         return
     
     shortcuts_path = os.path.join(steam_path, "userdata", user_id, "config", "shortcuts.vdf")
@@ -598,11 +630,31 @@ def add_game_to_steam(game_name, exe_path, start_dir="", icon_path=""):
                 pass
 
     new_shortcut_id = str(highest_id + 1)
+    app_id = generate_appid(exe_path)
+    icon_path = None
+
+    config = configparser.ConfigParser()
+    config.optionxform = str
+    config.read('config.ini')
+    scripts_dir = config['Directories']['scriptsDir']
+
+    # Get Script Filename
+    script_filename = main_window.launch_script_name_input.text()
+    if not script_filename:
+        QMessageBox.warning(main_window, "Missing Script Name", "Please enter a launch script name.")
+        return False
+
+    script_path = os.path.join(scripts_dir, script_filename)
+
+    if not os.path.exists(script_path):
+        QMessageBox.warning(main_window, "Missing Launch Script", "The launch script file is missing. Please make sure you use the Save Launch Script button first.")
+        return False
+
 
     shortcuts["shortcuts"][new_shortcut_id] = {
-        "appid": "1353230",
-        "AppName": game_name,
-        "Exe": "\"" + exe_path + "\"",
+        "appid": app_id,
+        "AppName": game_title,
+        "Exe": "\"" + script_path + "\"",
         "StartDir": start_dir,
         "icon": icon_path,
         "ShortcutPath": "",
@@ -669,6 +721,49 @@ def get_steam_user_id(steam_path):
     else:
         print("Warning: Could not determine most recently active user.")
         return None
+
+def generate_appid(exe_path, seed=None):
+    """Generates a 32-bit unsigned integer appid from the MD5 of a file and a seed.
+
+    Args:
+        exe_path: The path to the executable file.
+        seed: An optional seed value (int or str). If None, a random seed is used.
+
+    Returns:
+        A 32-bit unsigned integer appid, or None if an error occurs.
+    """
+
+    try:
+        with open(exe_path, "rb") as f:
+            file_hash = hashlib.md5()
+            while chunk := f.read(8192):  # Read in chunks for large files
+                file_hash.update(chunk)
+        file_md5 = file_hash.digest()
+    except FileNotFoundError:
+        print(f"Error: File not found: {exe_path}")
+        return None
+    except OSError as e:
+        print(f"Error reading file: {e}")
+        return None
+
+    if seed is None:
+        seed = random.randint(0, 2**32 - 1)  # Use a random 32-bit integer as seed
+    elif isinstance(seed, str):
+        seed = int(hashlib.md5(seed.encode()).hexdigest(), 16)
+    elif not isinstance(seed, int):
+        print("Error: Seed must be an integer or string.")
+        return None
+
+    # Combine the MD5 hash and seed
+    combined_data = file_md5 + seed.to_bytes(4, byteorder='big') #Append the seed as 4 bytes
+
+    # Hash the combined data
+    combined_hash = hashlib.md5(combined_data).digest()
+
+    # Take the first 4 bytes of the combined hash and convert to unsigned int
+    appid = struct.unpack("<I", combined_hash[:4])[0] #Little Endian unsigned int
+
+    return appid
 
 class MainWindow(QWidget):
     def __init__(self):
@@ -775,7 +870,7 @@ class MainWindow(QWidget):
         self.add_to_steam_button = QPushButton("Add Game Script to Steam")
         self.run_installer_button.clicked.connect(lambda: run_installer(self))
         self.save_script_button.clicked.connect(lambda: save_launch_script(self))
-        self.add_to_steam_button.clicked.connect(lambda: add_game_to_steam("Test","/home/stefan/Games/Launch Scripts/umu-1353230.sh"))
+        self.add_to_steam_button.clicked.connect(lambda: add_game_to_steam(self))
 
         button_row.addWidget(self.run_installer_button) # Add to the row
         button_row.addWidget(self.save_script_button)   # Add to the row
