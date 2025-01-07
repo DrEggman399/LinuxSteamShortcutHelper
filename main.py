@@ -8,6 +8,9 @@ import requests
 import csv
 import pandas as pd
 import toml
+import vdf
+import glob
+import time
 
 from PyQt6.QtWidgets import *
 from PyQt6.QtGui import *
@@ -262,9 +265,17 @@ def search_steam(search_string):
 def run_installer(main_window):
     """Runs the installer, prompting for a file and using either a custom prefix or the global prefix from config.ini."""
 
-    # Check if an item is selected in the tree view
-    selected_indexes = main_window.tree_view.selectionModel().selectedIndexes()
-    if not selected_indexes:
+    selected_indexes = None
+    model = None
+
+    if main_window.umu_tree_view.selectionModel().hasSelection():
+        selected_indexes = main_window.umu_tree_view.selectionModel().selectedIndexes()
+        model = main_window.umu_tree_view.model()
+    elif main_window.steam_tree_view.selectionModel().hasSelection():
+        selected_indexes = main_window.steam_tree_view.selectionModel().selectedIndexes()
+        model = main_window.steam_tree_view.model()
+
+    if not selected_indexes or not model:
         reply = QMessageBox.question(main_window, "No Item Selected", "No game selected. Do you want to proceed with the installation anyway?",
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.No:
@@ -278,8 +289,6 @@ def run_installer(main_window):
         first_index = selected_indexes[0]
         # Get the row
         row = first_index.row()
-        # Get the model
-        model = main_window.tree_view.model()
 
         # Get the UMU ID (third column, index 2)
         umu_id_index = model.index(row, 2)
@@ -382,26 +391,27 @@ def run_installer(main_window):
     return True
 
 def save_launch_script(main_window):
-    """Saves the launch script to the scripts directory."""
+    """Saves the launch script based on the selected tree view."""
 
-    # Get UMU ID (same as in run_installer)
-    selected_indexes = main_window.tree_view.selectionModel().selectedIndexes()
-    if not selected_indexes:
-        reply = QMessageBox.question(main_window, "No Item Selected", "No game selected. Do you want to proceed with the installation anyway?",
-                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if reply == QMessageBox.StandardButton.No:
-            return False
-        else:
-            umu_id = None
-            store_value = None
-            print("No UMU ID selected, proceeding anyway")
+    selected_indexes = None
+    model = None
+
+    if main_window.umu_tree_view.selectionModel().hasSelection():
+        selected_indexes = main_window.umu_tree_view.selectionModel().selectedIndexes()
+        model = main_window.umu_tree_view.model()
+    elif main_window.steam_tree_view.selectionModel().hasSelection():
+        selected_indexes = main_window.steam_tree_view.selectionModel().selectedIndexes()
+        model = main_window.steam_tree_view.model()
+
+    if not selected_indexes or not model:
+        print("No UMU ID selected")
+        QMessageBox.warning(main_window, "No Game Selected", "Please search for and select a game.") #TODO: allow custom game entries
+        return False  # Exit the function immediately
     else:
         # Get the first selected index
         first_index = selected_indexes[0]
         # Get the row
         row = first_index.row()
-        # Get the model
-        model = main_window.tree_view.model()
 
         # Get the UMU ID (third column, index 2)
         umu_id_index = model.index(row, 2)
@@ -548,7 +558,118 @@ def save_launch_script(main_window):
         return False
 
     return True
+
+def add_game_to_steam(game_name, exe_path, start_dir="", icon_path=""):
+    """Adds a non-Steam game shortcut to Steam's shortcuts.vdf file (Linux only)."""
+
+    steam_path = get_steam_path()
+    if not steam_path:
+        print("Error: Could not find Steam installation.")
+        return
+
+    user_id = get_steam_user_id(steam_path)
+    if not user_id:
+        print("Error: Could not determine Steam user ID.")
+        return
     
+    shortcuts_path = os.path.join(steam_path, "userdata", user_id, "config", "shortcuts.vdf")
+
+    try:
+        with open(shortcuts_path, "rb") as f:
+            try:
+                shortcuts = vdf.binary_load(f)
+            except vdf.VDFDecodeError as e:  # Catch VDF decoding errors
+                print(f"Error decoding shortcuts.vdf: {e}")
+                return  # Exit the function if decoding fails
+    except FileNotFoundError:
+        print(f"Warning: shortcuts.vdf not found. Creating a new one.")
+        shortcuts = {"shortcuts": {}}  # It's okay to create a new one if it doesn't exist
+    except OSError as e: # Catch other OS errors like permissions
+        print(f"Error opening shortcuts.vdf: {e}")
+        return
+
+    highest_id = -1
+    if shortcuts["shortcuts"]:  # Check if the shortcuts dictionary is not empty
+        for shortcut_id_str in shortcuts["shortcuts"]:
+            try:
+                shortcut_id = int(shortcut_id_str)
+                highest_id = max(highest_id, shortcut_id)
+            except ValueError:
+                pass
+
+    new_shortcut_id = str(highest_id + 1)
+
+    shortcuts["shortcuts"][new_shortcut_id] = {
+        "appid": "1353230",
+        "AppName": game_name,
+        "Exe": "\"" + exe_path + "\"",
+        "StartDir": start_dir,
+        "icon": icon_path,
+        "ShortcutPath": "",
+        "LaunchOptions": "",
+        "IsHidden": "0",
+        "AllowDesktopConfig": "1",
+        "AllowOverlay": "1",
+        "InGame": "0",
+        "LastPlayTime": "0",
+        "FlatpakAppID": "",
+    }
+
+    try:
+        with open(shortcuts_path, "wb") as f:
+            vdf.binary_dump(shortcuts, f)  # Use binary_dump
+        print(f"Successfully added '{game_name}' to Steam.")
+    except Exception as e:
+        print(f"Error writing to shortcuts.vdf: {e}")
+
+def get_steam_path():
+    """Attempts to find the Steam installation directory on Linux."""
+    possible_paths = [
+        os.path.expanduser("~/.steam/steam"),
+        os.path.expanduser("~/.local/share/Steam"),
+        "/usr/games/steam",
+        "/usr/local/games/steam"
+    ]
+    for path in possible_paths:
+        if os.path.exists(path):
+            return path
+    return None
+
+def get_steam_user_id(steam_path):
+    """Finds the most recently active Steam user's ID."""
+    userdata_path = os.path.join(steam_path, "userdata")
+    if not os.path.exists(userdata_path):
+        print("Error: userdata directory not found.")
+        return None
+
+    user_folders = glob.glob(os.path.join(userdata_path, "*"))
+    if not user_folders:
+        print("Error: No user data found.")
+        return None
+
+    most_recent_folder = None
+    most_recent_time = 0
+
+    for user_folder in user_folders:
+        try:
+            folder_mtime = os.path.getmtime(user_folder)
+            if folder_mtime > most_recent_time:
+                most_recent_time = folder_mtime
+                most_recent_folder = user_folder
+        except OSError:  # Handle potential errors accessing folder metadata
+            continue
+
+    if most_recent_folder:
+        user_id = os.path.basename(most_recent_folder)
+        if user_id.isdigit():
+            return user_id
+        else:
+            print("Warning: Most recently modified folder name is not a valid user ID.")
+            return None
+    else:
+        print("Warning: Could not determine most recently active user.")
+        return None
+
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
@@ -647,13 +768,21 @@ class MainWindow(QWidget):
         self.steam_tree_view.selectionModel().selectionChanged.connect(lambda: self.update_launch_script_name("steam"))
 
         # Bottom layout
-        bottom_layout = QHBoxLayout()
+        bottom_layout = QVBoxLayout() # Outer layout is now vertical
+        button_row = QHBoxLayout() # Inner layout for the first two buttons
         self.run_installer_button = QPushButton("Run Installer")
         self.save_script_button = QPushButton("Save Launch Script")
+        self.add_to_steam_button = QPushButton("Add Game Script to Steam")
         self.run_installer_button.clicked.connect(lambda: run_installer(self))
         self.save_script_button.clicked.connect(lambda: save_launch_script(self))
-        bottom_layout.addWidget(self.run_installer_button)
-        bottom_layout.addWidget(self.save_script_button)
+        self.add_to_steam_button.clicked.connect(lambda: add_game_to_steam("Test","/home/stefan/Games/Launch Scripts/umu-1353230.sh"))
+
+        button_row.addWidget(self.run_installer_button) # Add to the row
+        button_row.addWidget(self.save_script_button)   # Add to the row
+
+        bottom_layout.addLayout(button_row)       # Add the row to the vertical layout
+        bottom_layout.addWidget(self.add_to_steam_button) # Add the new button below
+
         main_layout.addLayout(bottom_layout)
 
         self.setLayout(main_layout)
@@ -750,7 +879,6 @@ class MainWindow(QWidget):
             self.update_launch_script_name("umu" if source_tree_view == self.umu_tree_view else "steam")
         finally:
             self.selection_clearing = False #Ensure flag is always reset
-
         
 if __name__ == "__main__":
     app = QApplication(sys.argv)
