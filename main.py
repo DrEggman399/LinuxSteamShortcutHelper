@@ -671,12 +671,13 @@ def add_game_to_steam(main_window, print_status):
         return False
     
     new_shortcut_id = str(highest_id + 1)
-    exe_id = str(generate_exeid(exe_path))
+    exe_id = generate_exeid(exe_path)
+    steam_file_id = signed_to_unsigned(exe_id)
 
     artwork_path = os.path.join(steam_path, "userdata", user_id, "config", "grid")
     is_int_appid, app_id = validate_umu_id(umu_id)
 
-    icon_path = get_icon_from_steam(artwork_path, exe_id, app_id, print_status)
+    icon_path = get_icon_from_steam(artwork_path, steam_file_id, app_id, print_status)
     
     if not icon_path:
         icon_path = "" #If no icon, use a null string to prevent errors saving VDF; it can't handle None types
@@ -721,7 +722,7 @@ def add_game_to_steam(main_window, print_status):
 
     if store_value == 'Steam' or (is_int_appid and app_id != codename):
         #fetch_artwork_sgdb(artwork_path, exe_id, app_id, store_value)
-        get_artwork_from_steam(artwork_path, exe_id, app_id, print_status)
+        get_artwork_from_steam(artwork_path, steam_file_id, app_id, print_status)
 
 def get_steam_path():
     """Attempts to find the Steam installation directory on Linux."""
@@ -776,21 +777,11 @@ def get_steam_user_id(steam_path):
         return None
 
 def generate_exeid(exe_path, seed=None):
-    """Generates a 32-bit unsigned integer exeid from the MD5 of a file and a seed.
-    Refer to generated id as exeid; refer to store/steamid as appid
-
-    Args:
-        exe_path: The path to the executable file.
-        seed: An optional seed value (int or str). If None, a random seed is used.
-
-    Returns:
-        A 32-bit unsigned integer exeid, or None if an error occurs.
-    """
-
+    """Generates a 32-bit signed integer exeid."""
     try:
         with open(exe_path, "rb") as f:
             file_hash = hashlib.md5()
-            while chunk := f.read(8192):  # Read in chunks for large files
+            while chunk := f.read(8192):
                 file_hash.update(chunk)
         file_md5 = file_hash.digest()
     except FileNotFoundError:
@@ -801,21 +792,19 @@ def generate_exeid(exe_path, seed=None):
         return None
 
     if seed is None:
-        seed = random.randint(0, 2**32 - 1)  # Use a random 32-bit integer as seed
+        seed = random.randint(-2**31, 2**31 - 1)
     elif isinstance(seed, str):
-        seed = int(hashlib.md5(seed.encode()).hexdigest(), 16)
+        seed = int(hashlib.md5(seed.encode()).hexdigest(), 16) % 2**32 - 2**31 #Ensure within range
     elif not isinstance(seed, int):
         print("Error: Seed must be an integer or string.")
         return None
 
-    # Combine the MD5 hash and seed
-    combined_data = file_md5 + seed.to_bytes(4, byteorder='big') #Append the seed as 4 bytes
+    # Use struct to correctly handle signed integers to bytes
+    combined_data = file_md5 + struct.pack(">i", seed) #Big-endian signed integer
 
-    # Hash the combined data
     combined_hash = hashlib.md5(combined_data).digest()
 
-    # Take the first 4 bytes of the combined hash and convert to unsigned int
-    exeid = struct.unpack("<I", combined_hash[:4])[0] #Little Endian unsigned int
+    exeid = int.from_bytes(combined_hash[:4], byteorder='little', signed=True)
 
     return exeid
 
@@ -877,12 +866,12 @@ def validate_umu_id(umu_id):
     else:
         return False, None # No match at all
 
-def get_artwork_from_steam(artwork_path, exe_id, app_id, print_status):
+def get_artwork_from_steam(artwork_path, steam_file_id, app_id, print_status):
   """Downloads and saves 4 Steam artwork files.
 
   Args:
     artwork_path: The path to save the downloaded files.
-    exe_id: The executable ID of the Steam game.
+    steam_file_id: The executable ID of the Steam game. Unsigned 32-bit int conversion of the stored, signed 32-bit int
     app_id: The Steam application ID.
 
   Raises:
@@ -895,10 +884,10 @@ def get_artwork_from_steam(artwork_path, exe_id, app_id, print_status):
   base_url = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{app_id}/"
 
   files = [
-    ("header.jpg", f"{exe_id}.jpg"),
-    ("library_600x900_2x.jpg", f"{exe_id}p.jpg"),
-    ("logo_2x.png", f"{exe_id}_logo.png"),
-    ("library_hero_2x.jpg", f"{exe_id}_hero.jpg")
+    ("header.jpg", f"{steam_file_id}.jpg"),
+    ("library_600x900_2x.jpg", f"{steam_file_id}p.jpg"),
+    ("logo_2x.png", f"{steam_file_id}_logo.png"),
+    ("library_hero_2x.jpg", f"{steam_file_id}_hero.jpg")
   ]
 
   for filename, save_name in files:
@@ -919,14 +908,14 @@ def get_artwork_from_steam(artwork_path, exe_id, app_id, print_status):
     except (requests.exceptions.RequestException, OSError) as e:
       print_status(f"Error downloading {filename}: {e}")
 
-def get_icon_from_steam(artwork_path, exe_id, app_id, print_status):
+def get_icon_from_steam(artwork_path, steam_file_id, app_id, print_status):
     """
     Retrieves the client icon from the Steam API and saves it to the specified path using requests.
 
     Args:
         artwork_path (str): Path to store the downloaded icon.
-        exe_id (str): Steam executable ID.
-        app_id (str): Steam application ID.
+        steam_file_id: The executable ID of the Steam game. Unsigned 32-bit int conversion of the stored, signed 32-bit int
+        app_id: The Steam application ID.
 
     Returns:
         str: Path to the saved icon file or None if not found or error occurred.
@@ -942,7 +931,7 @@ def get_icon_from_steam(artwork_path, exe_id, app_id, print_status):
 
         if client_icon_hash:
             icon_url = f"https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/{app_id}/{client_icon_hash}.ico"
-            filename = os.path.join(artwork_path, f"{exe_id}_icon.ico") # Use os.path.join for cross-platform compatibility
+            filename = os.path.join(artwork_path, f"{steam_file_id}_icon.ico") # Use os.path.join for cross-platform compatibility
 
             try:
                 icon_response = requests.get(icon_url, stream=True) # stream=True is important for large files
@@ -966,6 +955,28 @@ def get_icon_from_steam(artwork_path, exe_id, app_id, print_status):
     except requests.exceptions.RequestException as e:
         print_status(f"Error retrieving information from SteamCMD API: {e}")
         return None
+
+def signed_to_unsigned(signed_int):
+  """
+  Converts a signed integer to an unsigned integer.
+
+  Args:
+    signed_int: The signed integer to convert.
+
+  Returns:
+    The unsigned integer equivalent of the signed integer.
+  """
+
+  # Determine the bit width of the signed integer
+  bit_width = signed_int.bit_length() + 1  # Add 1 for the sign bit
+
+  # Create a mask of all 1s with the same bit width
+  mask = (1 << bit_width) - 1
+
+  # Perform the conversion
+  unsigned_int = signed_int & mask
+
+  return unsigned_int
 
 class MainWindow(QWidget):
     def __init__(self):
