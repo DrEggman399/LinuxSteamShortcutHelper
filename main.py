@@ -15,6 +15,7 @@ import hashlib
 import random
 import struct
 import re
+import json
 
 from PyQt6.QtWidgets import *
 from PyQt6.QtGui import *
@@ -566,7 +567,7 @@ def save_launch_script(main_window):
 
     return True
 
-def add_game_to_steam(main_window):
+def add_game_to_steam(main_window, print_status):
     """Adds a non-Steam game shortcut to Steam's shortcuts.vdf file (Linux only)."""
 
     selected_indexes = None
@@ -593,7 +594,7 @@ def add_game_to_steam(main_window):
     if codename:
         selected_item = model().itemFromIndex(first_index)
         codename = selected_item.data(Qt.ItemDataRole.UserRole)
-        print(f"Selected CODENAME: {codename}")
+        print_status(f"Selected CODENAME: {codename}")
 
     # Get the row
     row = first_index.row()
@@ -601,17 +602,17 @@ def add_game_to_steam(main_window):
     # Get the game Title (first column, index 0)
     game_title_index = model.index(row, 0)
     game_title = model.data(game_title_index, Qt.ItemDataRole.DisplayRole)
-    print(f"Selected Title: {game_title}")
+    print_status(f"Selected Title: {game_title}")
 
     # Get the Store Value (second column, index 1)
     store_value_index = model.index(row, 1)
     store_value = model.data(store_value_index, Qt.ItemDataRole.DisplayRole)
-    print(f"Store Value selected: {store_value}") 
+    print_status(f"Store Value selected: {store_value}") 
 
     # Get the UMU ID (third column, index 2)
     umu_id_index = model.index(row, 2)
     umu_id = model.data(umu_id_index, Qt.ItemDataRole.DisplayRole)
-    print(f"UMU ID selected: {umu_id}")
+    print_status(f"UMU ID selected: {umu_id}")
 
     steam_path = get_steam_path()
     if not steam_path:
@@ -633,12 +634,14 @@ def add_game_to_steam(main_window):
                 shortcuts = vdf.binary_load(f)
             except Exception as e:
                 print(f"An unexpected error occurred: {e}")
+                QMessageBox.warning(main_window, "Error Opening Shortcuts.vdf", "Could not open shortcuts.vdf.")
                 return  # Exit the function if decoding fails
     except FileNotFoundError:
-        print(f"Warning: shortcuts.vdf not found. Creating a new one.")
+        print_status(f"Warning: shortcuts.vdf not found. Creating a new one.")
         shortcuts = {"shortcuts": {}}  # It's okay to create a new one if it doesn't exist
     except OSError as e: # Catch other OS errors like permissions
         print(f"Error opening shortcuts.vdf: {e}")
+        QMessageBox.warning(main_window, "Error Opening Shortcuts.vdf", "Could not open shortcuts.vdf.")
         return
 
     highest_id = -1
@@ -669,7 +672,14 @@ def add_game_to_steam(main_window):
     
     new_shortcut_id = str(highest_id + 1)
     exe_id = str(generate_exeid(exe_path))
-    icon_path = ""
+
+    artwork_path = os.path.join(steam_path, "userdata", user_id, "config", "grid")
+    is_int_appid, app_id = validate_umu_id(umu_id)
+
+    icon_path = get_icon_from_steam(artwork_path, exe_id, app_id, print_status)
+    
+    if not icon_path:
+        icon_path = "" #If no icon, use a null string to prevent errors saving VDF; it can't handle None types
 
     shortcuts["shortcuts"][new_shortcut_id] = {
         "appid": exe_id,
@@ -690,18 +700,28 @@ def add_game_to_steam(main_window):
     try:
         with open(shortcuts_path, "wb") as f:
             vdf.binary_dump(shortcuts, f)  # Use binary_dump
-        print(f"Successfully added '{game_name}' to Steam.")
+        print_status(f"Successfully added '{game_title}' to Steam.")
     except Exception as e:
         print(f"Error writing to shortcuts.vdf: {e}")
-
-    artwork_path = os.path.join(steam_path, "userdata", user_id, "config", "grid")
-    is_int_appid, app_id = validate_umu_id(umu_id)
+        QMessageBox.warning(main_window, "Error Opening Shortcuts.vdf", "Could not open shortcuts.vdf.")
+        if icon_path:  # Check if the string is not empty
+            try:
+                if os.path.exists(icon_path):
+                    os.remove(icon_path)
+                    print(f"Deleted icon: {icon_path}")
+                else:
+                    print(f"Icon not found: {icon_path}")
+            except OSError as e:
+                print(f"Error deleting icon {icon_path}: {e}")
+            except Exception as e: # catch other potential exceptions
+                print(f"An unexpected error occurred: {e}")
+        return False
 
     #Logic: Check store. If non-steam, check umu_id. If second portion is all numbers, check if number matches codename. If not, search steam store. If yes, it's a non-steam game (e.g. gog)
 
     if store_value == 'Steam' or (is_int_appid and app_id != codename):
         #fetch_artwork_sgdb(artwork_path, exe_id, app_id, store_value)
-        get_artwork_from_steam(artwork_path, exe_id, app_id)
+        get_artwork_from_steam(artwork_path, exe_id, app_id, print_status)
 
 
 def get_steam_path():
@@ -817,7 +837,7 @@ def fetch_artwork_sgdb(artwork_path, exe_id, app_id, store):
 
     return True
 
-def fetch_icon_sgdb(artwork_path=None, exe_id=None, app_id='1353230', store=None):
+def fetch_icon_sgdb(artwork_path, exe_id, app_id, store):
     #Icon has to be a separate function, because it's needed at VDF build time. If VDF build fails, the randomized non-steam exeid will change, and the stored file wouldn't be valid anymore.
     #It could possibly be mitigated by using steam's real appid instead, but not sure what chaos that could cause
 
@@ -858,7 +878,7 @@ def validate_umu_id(umu_id):
     else:
         return False, None # No match at all
 
-def get_artwork_from_steam(artwork_path, exe_id, app_id):
+def get_artwork_from_steam(artwork_path, exe_id, app_id, print_status):
   """Downloads and saves 4 Steam artwork files.
 
   Args:
@@ -896,9 +916,57 @@ def get_artwork_from_steam(artwork_path, exe_id, app_id):
         for chunk in response.iter_content(1024):
           f.write(chunk)
 
-      print(f"Downloaded artwork: {save_name}")
+      print_status(f"Downloaded artwork: {save_name}")
     except (requests.exceptions.RequestException, OSError) as e:
-      print(f"Error downloading {filename}: {e}")
+      print_status(f"Error downloading {filename}: {e}")
+
+def get_icon_from_steam(artwork_path, exe_id, app_id, print_status):
+    """
+    Retrieves the client icon from the Steam API and saves it to the specified path using requests.
+
+    Args:
+        artwork_path (str): Path to store the downloaded icon.
+        exe_id (str): Steam executable ID.
+        app_id (str): Steam application ID.
+
+    Returns:
+        str: Path to the saved icon file or None if not found or error occurred.
+    """
+    url = f"https://api.steamcmd.net/v1/info/{app_id}"
+
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+
+        data = json.loads(response.text)
+        client_icon_hash = data.get("data", {}).get(app_id, {}).get("common", {}).get("clienticon")
+
+        if client_icon_hash:
+            icon_url = f"https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/{app_id}/{client_icon_hash}.ico"
+            filename = os.path.join(artwork_path, f"{exe_id}_icon.ico") # Use os.path.join for cross-platform compatibility
+
+            try:
+                icon_response = requests.get(icon_url, stream=True) # stream=True is important for large files
+                icon_response.raise_for_status()
+
+                with open(filename, 'wb') as f:
+                    for chunk in icon_response.iter_content(chunk_size=8192): # Iterate over the response in chunks
+                        f.write(chunk)
+
+                print_status(f"Icon saved to: {filename}")
+                return filename
+
+            except requests.exceptions.RequestException as e:
+                print_status(f"Error downloading icon: {e}")
+                return None
+
+        else:
+            print_status(f"Client icon not found for app ID: {app_id}")
+            return None
+
+    except requests.exceptions.RequestException as e:
+        print_status(f"Error retrieving information from SteamCMD API: {e}")
+        return None
 
 class MainWindow(QWidget):
     def __init__(self):
@@ -1005,7 +1073,7 @@ class MainWindow(QWidget):
         self.add_to_steam_button = QPushButton("Add Game Script to Steam")
         self.run_installer_button.clicked.connect(lambda: run_installer(self))
         self.save_script_button.clicked.connect(lambda: save_launch_script(self))
-        self.add_to_steam_button.clicked.connect(lambda: add_game_to_steam(self))
+        self.add_to_steam_button.clicked.connect(self.show_modal_and_add_game) # Corrected connection
 
         button_row.addWidget(self.run_installer_button) # Add to the row
         button_row.addWidget(self.save_script_button)   # Add to the row
@@ -1015,6 +1083,7 @@ class MainWindow(QWidget):
 
         main_layout.addLayout(bottom_layout)
 
+        self.status_modal = StatusModal(self)
         self.setLayout(main_layout)
 
     def update_launch_script_name(self, tree_view_type):
@@ -1115,7 +1184,38 @@ class MainWindow(QWidget):
             self.update_launch_script_name("umu" if source_tree_view == self.umu_tree_view else "steam")
         finally:
             self.selection_clearing = False #Ensure flag is always reset
-        
+
+    def show_modal_and_add_game(self):
+        self.status_modal.clear()
+        self.status_modal.show()
+        self.status_modal.raise_()
+        self.status_modal.activateWindow()
+        add_game_to_steam(self, self.status_modal.message_received.emit) # Corrected call
+
+class StatusModal(QDialog):
+    """Modal dialog for displaying status messages."""
+
+    message_received = pyqtSignal(str)  # Signal for receiving messages
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Status")
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint) # Remove ? button
+        self.layout = QVBoxLayout(self)
+        self.text_edit = QTextEdit()
+        self.text_edit.setReadOnly(True)  # Make it read-only
+        self.layout.addWidget(self.text_edit)
+        self.resize(400, 300) # set initial size
+        self.message_received.connect(self.append_message)
+
+    def append_message(self, message):
+        """Appends a message to the text edit."""
+        self.text_edit.append(message)
+        self.text_edit.verticalScrollBar().setValue(self.text_edit.verticalScrollBar().maximum()) # Scrolls to bottom
+
+    def clear(self):
+        self.text_edit.clear()
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     set_default_config()
