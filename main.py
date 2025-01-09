@@ -14,11 +14,13 @@ import time
 import hashlib
 import random
 import struct
+import re
 
 from PyQt6.QtWidgets import *
 from PyQt6.QtGui import *
 from PyQt6.QtCore import *
 from steam_web_api import Steam
+from steamgrid import *
 
 def get_home_directory():
     
@@ -217,11 +219,11 @@ def search_umu_database(search_string):
     except pd.errors.ParserError:
         return f"Error: Could not parse {filename}."
 
-    if not all(col in df.columns for col in ['TITLE', 'STORE', 'UMU_ID']):
-        return "Error: The CSV must contain columns 'TITLE', 'STORE', and 'UMU_ID'."
+    if not all(col in df.columns for col in ['TITLE', 'STORE', 'CODENAME', 'UMU_ID']):
+        return "Error: The CSV must contain columns 'TITLE', 'STORE', 'CODENAME', and 'UMU_ID'."
 
     mask = df['TITLE'].str.contains(search_string, case=False, na=False)
-    results = df.loc[mask, ['TITLE', 'STORE', 'UMU_ID']]
+    results = df.loc[mask, ['TITLE', 'STORE', 'CODENAME', 'UMU_ID']]
     return results
 
 def search_steam(search_string):
@@ -258,7 +260,8 @@ def search_steam(search_string):
                     steam_games_list.append({
                         "TITLE": game.get("name"),
                         "STORE": "Steam",
-                        "UMU_ID": f"umu-{game_id}"
+                        "UMU_ID": f"umu-{game_id}",
+                        "CODENAME": None
                     })
                 return pd.DataFrame(steam_games_list)
         return pd.DataFrame()
@@ -568,10 +571,12 @@ def add_game_to_steam(main_window):
 
     selected_indexes = None
     model = None
+    codename = False
 
     if main_window.umu_tree_view.selectionModel().hasSelection():
         selected_indexes = main_window.umu_tree_view.selectionModel().selectedIndexes()
         model = main_window.umu_tree_view.model()
+        codename = True
     elif main_window.steam_tree_view.selectionModel().hasSelection():
         selected_indexes = main_window.steam_tree_view.selectionModel().selectedIndexes()
         model = main_window.steam_tree_view.model()
@@ -580,18 +585,34 @@ def add_game_to_steam(main_window):
         print("No UMU ID selected")
         QMessageBox.warning(main_window, "No Game Selected", "Please search for and select a game.") #TODO: allow custom game entries
         return False  # Exit the function immediately
-    else:
-        # Get the first selected index
-        first_index = selected_indexes[0]
-        # Get the row
-        row = first_index.row()
 
-        # Get the game Title (first column, index 0)
-        game_title_index = model.index(row, 0)
-        game_title = model.data(game_title_index, Qt.ItemDataRole.DisplayRole)
-        print(f"UMU ID selected: {umu_id}")
-    
-    
+    # Get the first selected index
+    first_index = selected_indexes[0]
+
+    #If UMU-ID selected, store the codename for comparison later
+    if codename:
+        selected_item = model().itemFromIndex(first_index)
+        codename = selected_item.data(Qt.ItemDataRole.UserRole)
+        print(f"Selected CODENAME: {codename}")
+
+    # Get the row
+    row = first_index.row()
+
+    # Get the game Title (first column, index 0)
+    game_title_index = model.index(row, 0)
+    game_title = model.data(game_title_index, Qt.ItemDataRole.DisplayRole)
+    print(f"Selected Title: {game_title}")
+
+    # Get the Store Value (second column, index 1)
+    store_value_index = model.index(row, 1)
+    store_value = model.data(store_value_index, Qt.ItemDataRole.DisplayRole)
+    print(f"Store Value selected: {store_value}") 
+
+    # Get the UMU ID (third column, index 2)
+    umu_id_index = model.index(row, 2)
+    umu_id = model.data(umu_id_index, Qt.ItemDataRole.DisplayRole)
+    print(f"UMU ID selected: {umu_id}")
+
     steam_path = get_steam_path()
     if not steam_path:
         print("Error: Could not find Steam installation.")
@@ -601,7 +622,7 @@ def add_game_to_steam(main_window):
     user_id = get_steam_user_id(steam_path)
     if not user_id:
         print("Error: Could not determine Steam user ID.")
-        QMessageBox.warning(main_window, "Unable to Indentify Folder", "Could not determine Steam user ID.")
+        QMessageBox.warning(main_window, "Unable to Identify Folder", "Could not determine Steam user ID.")
         return
     
     shortcuts_path = os.path.join(steam_path, "userdata", user_id, "config", "shortcuts.vdf")
@@ -610,8 +631,8 @@ def add_game_to_steam(main_window):
         with open(shortcuts_path, "rb") as f:
             try:
                 shortcuts = vdf.binary_load(f)
-            except vdf.VDFDecodeError as e:  # Catch VDF decoding errors
-                print(f"Error decoding shortcuts.vdf: {e}")
+            except Exception as e:
+                print(f"An unexpected error occurred: {e}")
                 return  # Exit the function if decoding fails
     except FileNotFoundError:
         print(f"Warning: shortcuts.vdf not found. Creating a new one.")
@@ -629,10 +650,6 @@ def add_game_to_steam(main_window):
             except ValueError:
                 pass
 
-    new_shortcut_id = str(highest_id + 1)
-    app_id = generate_appid(exe_path)
-    icon_path = None
-
     config = configparser.ConfigParser()
     config.optionxform = str
     config.read('config.ini')
@@ -644,18 +661,21 @@ def add_game_to_steam(main_window):
         QMessageBox.warning(main_window, "Missing Script Name", "Please enter a launch script name.")
         return False
 
-    script_path = os.path.join(scripts_dir, script_filename)
+    exe_path = os.path.join(scripts_dir, script_filename)
 
-    if not os.path.exists(script_path):
+    if not os.path.exists(exe_path):
         QMessageBox.warning(main_window, "Missing Launch Script", "The launch script file is missing. Please make sure you use the Save Launch Script button first.")
         return False
-
+    
+    new_shortcut_id = str(highest_id + 1)
+    exe_id = str(generate_exeid(exe_path))
+    icon_path = ""
 
     shortcuts["shortcuts"][new_shortcut_id] = {
-        "appid": app_id,
+        "appid": exe_id,
         "AppName": game_title,
-        "Exe": "\"" + script_path + "\"",
-        "StartDir": start_dir,
+        "Exe": "\"" + exe_path + "\"",
+        "StartDir": scripts_dir,
         "icon": icon_path,
         "ShortcutPath": "",
         "LaunchOptions": "",
@@ -674,6 +694,16 @@ def add_game_to_steam(main_window):
     except Exception as e:
         print(f"Error writing to shortcuts.vdf: {e}")
 
+    artwork_path = os.path.join(steam_path, "userdata", user_id, "config", "grid")
+    is_int_appid, app_id = validate_umu_id(umu_id)
+
+    #Logic: Check store. If non-steam, check umu_id. If second portion is all numbers, check if number matches codename. If not, search steam store. If yes, it's a non-steam game (e.g. gog)
+
+    if store_value == 'Steam' or (is_int_appid and app_id != codename):
+        #fetch_artwork_sgdb(artwork_path, exe_id, app_id, store_value)
+        get_artwork_from_steam(artwork_path, exe_id, app_id)
+
+
 def get_steam_path():
     """Attempts to find the Steam installation directory on Linux."""
     possible_paths = [
@@ -688,7 +718,7 @@ def get_steam_path():
     return None
 
 def get_steam_user_id(steam_path):
-    """Finds the most recently active Steam user's ID."""
+    """Finds the most recently active Steam user's ID, excluding 'anonymous'."""
     userdata_path = os.path.join(steam_path, "userdata")
     if not os.path.exists(userdata_path):
         print("Error: userdata directory not found.")
@@ -703,6 +733,10 @@ def get_steam_user_id(steam_path):
     most_recent_time = 0
 
     for user_folder in user_folders:
+        user_id = os.path.basename(user_folder)
+        if user_id == "anonymous":  # Skip the "anonymous" folder
+            continue
+
         try:
             folder_mtime = os.path.getmtime(user_folder)
             if folder_mtime > most_recent_time:
@@ -719,18 +753,19 @@ def get_steam_user_id(steam_path):
             print("Warning: Most recently modified folder name is not a valid user ID.")
             return None
     else:
-        print("Warning: Could not determine most recently active user.")
+        print("Warning: Could not determine most recently active user (excluding anonymous).") # Updated message
         return None
 
-def generate_appid(exe_path, seed=None):
-    """Generates a 32-bit unsigned integer appid from the MD5 of a file and a seed.
+def generate_exeid(exe_path, seed=None):
+    """Generates a 32-bit unsigned integer exeid from the MD5 of a file and a seed.
+    Refer to generated id as exeid; refer to store/steamid as appid
 
     Args:
         exe_path: The path to the executable file.
         seed: An optional seed value (int or str). If None, a random seed is used.
 
     Returns:
-        A 32-bit unsigned integer appid, or None if an error occurs.
+        A 32-bit unsigned integer exeid, or None if an error occurs.
     """
 
     try:
@@ -761,9 +796,109 @@ def generate_appid(exe_path, seed=None):
     combined_hash = hashlib.md5(combined_data).digest()
 
     # Take the first 4 bytes of the combined hash and convert to unsigned int
-    appid = struct.unpack("<I", combined_hash[:4])[0] #Little Endian unsigned int
+    exeid = struct.unpack("<I", combined_hash[:4])[0] #Little Endian unsigned int
 
-    return appid
+    return exeid
+
+def fetch_artwork_sgdb(artwork_path, exe_id, app_id, store):
+
+    config = configparser.ConfigParser()
+    config.optionxform = str
+    config.read('config.ini')
+
+    if config['Keys']['steamgriddb'] == 0:
+        QMessageBox.warning(main_window, "No SGDB API Key Set", "Please obtain an API Key from SteamGridDB and save it in your config.ini file.")
+        return False
+    
+    sgdb = SteamGridDB(config['Keys']['steamgriddb'])
+    
+    if store == 'Steam':
+        grids = sgdb.get_grids_by_platform(game_ids=[app_id], platform=PlatformType.Steam)
+
+    return True
+
+def fetch_icon_sgdb(artwork_path=None, exe_id=None, app_id='1353230', store=None):
+    #Icon has to be a separate function, because it's needed at VDF build time. If VDF build fails, the randomized non-steam exeid will change, and the stored file wouldn't be valid anymore.
+    #It could possibly be mitigated by using steam's real appid instead, but not sure what chaos that could cause
+
+    config = configparser.ConfigParser()
+    config.optionxform = str
+    config.read('config.ini')
+
+    if config['Keys']['steamgriddb'] == 0:
+        QMessageBox.warning(main_window, "No SGDB API Key Set", "Please obtain an API Key from SteamGridDB and save it in your config.ini file.")
+        return False
+    
+    sgdb = SteamGridDB(config['Keys']['steamgriddb'])
+    
+    grids = sgdb.get_grids_by_platform(game_ids=[app_id], platform=PlatformType.Steam)
+
+    print("t")
+
+    return True
+
+def validate_umu_id(umu_id):
+    """
+    Validates umu_id and returns (valid, x_part).
+    Extracts x_part even if the format is invalid.
+    """
+    if not isinstance(umu_id, str):
+        return False, None  # Or "" if you prefer an empty string
+
+    match = re.match(r"^umu-(.+)$", umu_id) #Match anything after umu-
+
+    if match:
+        x_part = match.group(1)
+
+        #Now we do the more specific validation on x_part
+        if re.fullmatch(r"[1-9]\d*", x_part):
+            return True, x_part # Valid format and x_part
+        else:
+            return False, x_part #Invalid format, but we still return x_part
+    else:
+        return False, None # No match at all
+
+def get_artwork_from_steam(artwork_path, exe_id, app_id):
+  """Downloads and saves 4 Steam artwork files.
+
+  Args:
+    artwork_path: The path to save the downloaded files.
+    exe_id: The executable ID of the Steam game.
+    app_id: The Steam application ID.
+
+  Raises:
+    OSError: If an error occurs while creating the directory or saving a file.
+  """
+
+  # Create the artwork directory if it doesn't exist
+  os.makedirs(artwork_path, exist_ok=True)
+
+  base_url = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{app_id}/"
+
+  files = [
+    ("header.jpg", f"{exe_id}.jpg"),
+    ("library_600x900_2x.jpg", f"{exe_id}p.jpg"),
+    ("logo_2x.png", f"{exe_id}_logo.png"),
+    ("library_hero_2x.jpg", f"{exe_id}_hero.jpg")
+  ]
+
+  for filename, save_name in files:
+    url = os.path.join(base_url, filename)
+    full_path = os.path.join(artwork_path, save_name)
+
+    # Download the file and handle errors
+    try:
+      with open(full_path, "wb") as f:
+        # Use requests library for efficient downloading (install with "pip install requests")
+        response = requests.get(url, stream=True)
+        response.raise_for_status()
+
+        for chunk in response.iter_content(1024):
+          f.write(chunk)
+
+      print(f"Downloaded artwork: {save_name}")
+    except (requests.exceptions.RequestException, OSError) as e:
+      print(f"Error downloading {filename}: {e}")
 
 class MainWindow(QWidget):
     def __init__(self):
@@ -948,10 +1083,16 @@ class MainWindow(QWidget):
             root_node.appendRow(no_results_item)
             return
 
-        model.setHorizontalHeaderLabels(results.columns.tolist())
+        display_columns = ['TITLE', 'STORE', 'UMU_ID']
+
+        model.setHorizontalHeaderLabels(display_columns)
 
         for _, row in results.iterrows():
-            items = [QStandardItem(str(row[col])) for col in results.columns]
+            items = [QStandardItem(str(row[col])) for col in display_columns]
+
+            # Store the CODENAME as data in the first item of the row (TITLE)
+            items[0].setData(row['CODENAME'], Qt.ItemDataRole.UserRole)  # Store CODENAME
+
             for item in items:
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             model.appendRow(items)
