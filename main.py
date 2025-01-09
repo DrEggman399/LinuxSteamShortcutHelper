@@ -723,7 +723,6 @@ def add_game_to_steam(main_window, print_status):
         #fetch_artwork_sgdb(artwork_path, exe_id, app_id, store_value)
         get_artwork_from_steam(artwork_path, exe_id, app_id, print_status)
 
-
 def get_steam_path():
     """Attempts to find the Steam installation directory on Linux."""
     possible_paths = [
