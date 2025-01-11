@@ -16,12 +16,15 @@ import random
 import struct
 import re
 import json
+import datetime
+import tarfile
 
 from PyQt6.QtWidgets import *
 from PyQt6.QtGui import *
 from PyQt6.QtCore import *
 from steam_web_api import Steam
 from steamgrid import *
+from zipfile import ZipFile
 
 def get_home_directory():
     
@@ -91,11 +94,14 @@ def set_default_config():
         'steam-api': '0',
         'steamgriddb': '0'
     }
-    config['LastUpdated'] = {
+    config['AutoUpdateURL'] = {
+        'umu-launcher': 'https://api.github.com/repos/Open-Wine-Components/umu-launcher/releases/latest',
+        'umu-database': 'https://raw.githubusercontent.com/Open-Wine-Components/umu-database/refs/heads/main/umu-database.csv',
+    }
+    config['AutoUpdateDate'] = {
         'umu-launcher': '0',
         'umu-database': '0'
     }
-
 
     try:
         with open(config_file_path, 'w') as configFile:
@@ -114,48 +120,115 @@ def update_dependencies():
     config.optionxform = str
     config.read('config.ini')
 
-    dependencies = {
-        'umu-launcher': {
-            'url': 'placeholder_launcher_url',
-            'filename': 'umu_launcher.exe',
-            'folder': config['Directories']['umuDir']
-        },
-        'umu-database': {
-            'url': 'https://raw.githubusercontent.com/Open-Wine-Components/umu-database/refs/heads/main/umu-database.csv',
-            'filename': 'umu-database.csv',
-            'folder': ''
-        }
-    }
-
     today = datetime.date.today()
 
-    for dep_name, dep_info in dependencies.items():
-        last_updated_str = config['LastUpdated'].get(dep_name, '0')
-
-        try:
-            last_updated = datetime.datetime.strptime(last_updated_str, '%Y-%m-%d').date()
-        except ValueError:
-            last_updated = datetime.date(1970, 1, 1) #Set to an old date to force an update
-
-        if last_updated < today:
-            print(f"Updating {dep_name}...")
-            if download_file(dep_info['url'], dep_info['filename'], dep_info['folder'], overwrite=True):
-                config['LastUpdated'][dep_name] = today.strftime('%Y-%m-%d')
-            else:
-                print(f"Failed to update {dep_name}")
+    last_updated_str = config['AutoUpdateDate'].get('umu-database', '0')
 
     try:
-        with open(config_file_path, 'w') as configfile:
+        last_updated = datetime.datetime.strptime(last_updated_str, '%Y-%m-%d').date()
+    except ValueError:
+        last_updated = datetime.date(1970, 1, 1) #Set to an old date to force an update
+
+    if last_updated < today:
+        print(f"Updating umu-database...")
+        url = config['AutoUpdateURL'].get('umu-database')
+        if url: # Check if url exists
+            if download_file(url, overwrite=True):
+                config['AutoUpdateDate']['umu-database'] = today.strftime('%Y-%m-%d')
+            else:
+                print(f"Failed to download umu-database from {url}")
+        else:
+            print(f"No URL found for umu-database in AutoUpdateURL")
+
+    else:
+        print(f'umu-database up to date, last updated {config["AutoUpdateDate"]["umu-database"]}')
+
+    launcher_update_date = update_umu_launcher(config)
+
+    if launcher_update_date is None:
+        print(f'umu-launcher up to date, last updated {config["AutoUpdateDate"]["umu-launcher"]}')
+    else:
+        config["AutoUpdateDate"]["umu-launcher"] = launcher_update_date
+        
+    try:
+        with open('config.ini', 'w') as configfile:
             config.write(configfile)
     except OSError as e:
         print(f"Error writing to config file: {e}")
 
-def download_file(url, filename, folder_path=None, overwrite=False):
+def update_umu_launcher(config):
+
+    url = "https://api.github.com/repos/Open-Wine-Components/umu-launcher/releases/latest"
+    response = requests.get(url)
+
+    if response.status_code == 200:
+        data = response.json()
+        if config['AutoUpdateDate'].get('umu-launcher') == data.get("published_at"):
+            return None
+        assets = data.get("assets")
+        if not assets:
+            raise Exception("No assets found in the release")
+
+        for asset in assets:
+            if asset["name"] == "Zipapp.zip":
+                umu_run_url = asset["browser_download_url"]
+
+    if not umu_run_url:
+        raise Exception("No download URL found for Zipapp.zip")
+
+    if download_file(umu_run_url, 'Zipapp.zip', config['Directories'].get('umuDir'), overwrite=True):
+        try:
+            unpack_umu_run(config['Directories'].get('umuDir'))
+            print("umu-run executable successfully extracted!")
+            return data.get("published_at")
+        except OSError as e:
+            print(f"Error unpacking umu-run: {e}")
+    else:
+        raise Exception("Failed to download umu-launcher/Zipapp.zip")
+
+
+
+def unpack_umu_run(directory):
+    """
+    Unpacks the `umu-run` executable from Zipapp.zip and Zipapp.tar to the given directory.
+
+    Args:
+        directory: The directory path where the extracted executable should be saved.
+
+    Raises:
+        OSError: If any issue occurs during extraction.
+    """
+    # Check if directory exists
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
+    # Extract Zipapp.zip
+    try:
+        with ZipFile(os.path.join(directory, "Zipapp.zip"), 'r') as zip_ref:
+            zip_ref.extractall(directory)
+    except FileNotFoundError:
+        raise OSError("Zipapp.zip not found")
+    except Exception as e:
+        raise OSError(f"Error extracting Zipapp.zip: {e}")
+
+    # Extract umu-run from Zipapp.tar
+    try:
+        with tarfile.open(os.path.join(directory, "Zipapp.tar"), 'r') as tar_ref:
+            for member in tar_ref.getmembers():
+                if member.name == "umu-run":
+                    tar_ref.extract(member, directory)
+                    break
+    except FileNotFoundError:
+        raise OSError("Zipapp.tar not found")
+    except Exception as e:
+        raise OSError(f"Error extracting umu-run from Zipapp.tar: {e}")
+    
+def download_file(url, filename=None, folder_path=None, overwrite=False):
     """Downloads a file from a URL, optionally saving it to a specified folder.
 
     Args:
         url: The URL of the file to download.
-        filename: The name to save the file as.
+        filename: (Optional) The name to save the file as. If None, extracts it from the URL.
         folder_path: (Optional) The path to the folder where the file should be saved.
         overwrite: (Optional) If True, overwrite the file if it already exists. Defaults to False.
 
@@ -169,6 +242,19 @@ def download_file(url, filename, folder_path=None, overwrite=False):
         if response.status_code == 204:
             print(f"File not found at {url}")
             return False
+
+        if filename is None:
+            # Extract filename from URL without urllib
+            try:
+                filename = url.split("/")[-1]
+                if not filename: # handle cases where url ends with /
+                    print(f"Could not determine filename from URL: {url}")
+                    return False
+                # Handle query parameters in the URL
+                filename = filename.split("?")[0]
+            except IndexError:
+                print(f"Could not determine filename from URL: {url}")
+                return False
 
         if folder_path:
             if not os.path.exists(folder_path):
@@ -198,6 +284,9 @@ def download_file(url, filename, folder_path=None, overwrite=False):
         return False
     except OSError as e:
         print(f"Error saving file: {e}")
+        return False
+    except Exception as e: # Catching a more general exception for unexpected errors during filename extraction
+        print(f"An unexpected error occurred: {e}")
         return False
 
 def search_umu_database(search_string):
@@ -467,7 +556,6 @@ def save_launch_script(main_window):
         try:
             os.makedirs(umu_binary_dir, exist_ok=True)  # Create the directory
             print(f"Created umu directory: {umu_binary_dir}")
-            #add step here to download umu-run
         except OSError as e:
             QMessageBox.critical(main_window, "Error Creating Directory", f"Failed to create umu directory: {e}")
             return False
@@ -1229,6 +1317,7 @@ class StatusModal(QDialog):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     set_default_config()
+    update_dependencies()
     window = MainWindow()
     window.show()
     exit_code = app.exec()

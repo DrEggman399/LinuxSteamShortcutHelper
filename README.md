@@ -31,11 +31,11 @@ _Since Steam is launching a .sh file, it does not create a folder in the compatd
 **Benefits of launching game via umu-run**  
 :white_check_mark: Receive both Valve and Community fixes (via Valve-ProtonFixes and UMU-ProtonFixes) as we determine the game and pass that (AppID) to umu-run, rather than just running an .exe in Steam  
 :white_check_mark: Auto-update to the latest UMU-Proton version  
-:white_check_mark: Set desired Proton version ***currently done via script***  
+:white_check_mark: Set desired Proton version ***(currently done via script)***  
 
 **Automatically get official art and icons**  
 :white_check_mark: Use Steam AppID to get the official store header/hero/capsule/icon where available  
-:black_square_button: Use SteamGridDB to get missing artwork where needed ***in progress***  
+:black_square_button: Use SteamGridDB to get missing artwork where needed ***(in progress)***  
 
 ## Roadmap  
 :black_square_button: Add auto-update of dependencies: umu-database, umu-run  
