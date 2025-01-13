@@ -10,6 +10,7 @@ import pandas as pd
 import toml
 import vdf
 import glob
+import shutil
 import time
 import hashlib
 import random
@@ -18,6 +19,7 @@ import re
 import json
 import datetime
 import tarfile
+import uuid
 
 from PyQt6.QtWidgets import *
 from PyQt6.QtGui import *
@@ -25,6 +27,13 @@ from PyQt6.QtCore import *
 from steam_web_api import Steam
 from steamgrid import *
 from zipfile import ZipFile
+
+SESSION_ID = None
+
+def initialize_session():
+    global SESSION_ID  # Important: Declare that you're modifying the global one
+    SESSION_ID = str(uuid.uuid4())
+    print("Session initialized:", SESSION_ID)
 
 def get_home_directory():
     
@@ -185,8 +194,6 @@ def update_umu_launcher(config):
             print(f"Error unpacking umu-run: {e}")
     else:
         raise Exception("Failed to download umu-launcher/Zipapp.zip")
-
-
 
 def unpack_umu_run(directory):
     """
@@ -786,14 +793,52 @@ def add_game_to_steam(main_window, print_status):
         "FlatpakAppID": "",
     }
 
+    backup_and_save(shortcuts_path, shortcuts, game_title, main_window, icon_path, print_status)
+
+    #Logic: Check store. If non-steam, check umu_id. If second portion is all numbers, check if number matches codename. If not, search steam store. If yes, it's a non-steam game (e.g. gog)
+
+    if store_value == 'Steam' or (is_int_appid and app_id != codename):
+        #fetch_artwork_sgdb(artwork_path, exe_id, app_id, store_value)
+        get_artwork_from_steam(artwork_path, steam_file_id, app_id, print_status)
+
+def backup_and_save(shortcuts_path, shortcuts, game_title, main_window, icon_path, print_status):
+    """Backs up the shortcuts file and saves the new version."""
+
+    backup_dir = "shortcuts_backups"
+    max_backups = 5
+
+    os.makedirs(backup_dir, exist_ok=True)
+
+    backup_path = os.path.join(backup_dir, f"shortcuts_{SESSION_ID}.vdf")
+
+    # Check if a backup with the current session ID already exists
+    if os.path.exists(backup_path):
+        print_status(f"Backup with session ID '{SESSION_ID}' already exists.")
+        return  # Exit the function without creating a new backup
+
+    # Limit number of backups
+    backup_files = sorted(glob.glob(os.path.join(backup_dir, "shortcuts_*.vdf")), key=os.path.getmtime, reverse=True)
+    while len(backup_files) >= max_backups:
+        os.remove(backup_files[-1])
+        backup_files.pop()
+
     try:
+        if os.path.exists(shortcuts_path):
+            shutil.copy2(shortcuts_path, backup_path)
+            print_status(f"Created backup: {backup_path}")
+        else:
+            print_status("No existing shortcuts file found. Creating a new one.")
+
         with open(shortcuts_path, "wb") as f:
-            vdf.binary_dump(shortcuts, f)  # Use binary_dump
+            vdf.binary_dump(shortcuts, f)
         print_status(f"Successfully added '{game_title}' to Steam.")
+        return True
+
     except Exception as e:
         print(f"Error writing to shortcuts.vdf: {e}")
         QMessageBox.warning(main_window, "Error Opening Shortcuts.vdf", "Could not open shortcuts.vdf.")
-        if icon_path:  # Check if the string is not empty
+
+        if icon_path:
             try:
                 if os.path.exists(icon_path):
                     os.remove(icon_path)
@@ -802,15 +847,9 @@ def add_game_to_steam(main_window, print_status):
                     print(f"Icon not found: {icon_path}")
             except OSError as e:
                 print(f"Error deleting icon {icon_path}: {e}")
-            except Exception as e: # catch other potential exceptions
+            except Exception as e:
                 print(f"An unexpected error occurred: {e}")
         return False
-
-    #Logic: Check store. If non-steam, check umu_id. If second portion is all numbers, check if number matches codename. If not, search steam store. If yes, it's a non-steam game (e.g. gog)
-
-    if store_value == 'Steam' or (is_int_appid and app_id != codename):
-        #fetch_artwork_sgdb(artwork_path, exe_id, app_id, store_value)
-        get_artwork_from_steam(artwork_path, steam_file_id, app_id, print_status)
 
 def get_steam_path():
     """Attempts to find the Steam installation directory on Linux."""
@@ -1318,6 +1357,7 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     set_default_config()
     update_dependencies()
+    initialize_session()
     window = MainWindow()
     window.show()
     exit_code = app.exec()

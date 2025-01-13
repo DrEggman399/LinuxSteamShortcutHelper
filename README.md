@@ -38,7 +38,7 @@ _Since Steam is launching a .sh file, it does not create a folder in the compatd
 :black_square_button: Use SteamGridDB to get missing artwork where needed ***(in progress)***  
 
 ## Roadmap  
-:black_square_button: Add auto-update of dependencies: umu-database, umu-run  
+:white_check_mark: Add auto-update of dependencies: umu-database, umu-run  
 :black_square_button: Remove Steam Web API key requirement (switch to SteamCMD API)  
 :black_square_button: Add support for SteamGridDB for unofficial / non-steam game artwork  
 :black_square_button: Add configuration window  
