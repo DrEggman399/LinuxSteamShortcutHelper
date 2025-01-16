@@ -811,10 +811,7 @@ def backup_and_save(shortcuts_path, shortcuts, game_title, main_window, icon_pat
 
     backup_path = os.path.join(backup_dir, f"shortcuts_{SESSION_ID}.vdf")
 
-    # Check if a backup with the current session ID already exists
-    if os.path.exists(backup_path):
-        print_status(f"Backup with session ID '{SESSION_ID}' already exists.")
-        return  # Exit the function without creating a new backup
+
 
     # Limit number of backups
     backup_files = sorted(glob.glob(os.path.join(backup_dir, "shortcuts_*.vdf")), key=os.path.getmtime, reverse=True)
@@ -823,7 +820,10 @@ def backup_and_save(shortcuts_path, shortcuts, game_title, main_window, icon_pat
         backup_files.pop()
 
     try:
-        if os.path.exists(shortcuts_path):
+        # Check if a backup with the current session ID already exists
+        if os.path.exists(backup_path):
+            print_status(f"Backup with session ID '{SESSION_ID}' already exists.")
+        elif os.path.exists(shortcuts_path):
             shutil.copy2(shortcuts_path, backup_path)
             print_status(f"Created backup: {backup_path}")
         else:
