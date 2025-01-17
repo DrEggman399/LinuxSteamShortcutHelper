@@ -903,14 +903,14 @@ def get_steam_user_id(steam_path):
         print("Warning: Could not determine most recently active user (excluding anonymous).") # Updated message
         return None
 
-def generate_exeid(exe_path, seed=None):
-    """Generates a 32-bit signed integer exeid."""
+def generate_exeid(exe_path):
+    
     try:
         with open(exe_path, "rb") as f:
-            file_hash = hashlib.md5()
+            file_hash = hashlib.sha256()
             while chunk := f.read(8192):
                 file_hash.update(chunk)
-        file_md5 = file_hash.digest()
+        file_digest = file_hash.digest()
     except FileNotFoundError:
         print(f"Error: File not found: {exe_path}")
         return None
@@ -918,22 +918,24 @@ def generate_exeid(exe_path, seed=None):
         print(f"Error reading file: {e}")
         return None
 
-    if seed is None:
-        seed = random.randint(-2**31, 2**31 - 1)
-    elif isinstance(seed, str):
-        seed = int(hashlib.md5(seed.encode()).hexdigest(), 16) % 2**32 - 2**31 #Ensure within range
-    elif not isinstance(seed, int):
-        print("Error: Seed must be an integer or string.")
-        return None
+    hash_bytes = file_digest[:4]
+    hash_int = int.from_bytes(hash_bytes, byteorder='little')
 
-    # Use struct to correctly handle signed integers to bytes
-    combined_data = file_md5 + struct.pack(">i", seed) #Big-endian signed integer
+    # Correct way to create a negative number:
+    negative_id = -(hash_int & 0x7FFFFFFF) - 1 #Masks the sign bit and then inverts the number
 
-    combined_hash = hashlib.md5(combined_data).digest()
+    if negative_id == 0:
+      negative_id = (random.getrandbits(31) | (1<<31))
 
-    exeid = int.from_bytes(combined_hash[:4], byteorder='little', signed=True)
+    packed_id = struct.pack("<i", negative_id)
+    unpacked_id = struct.unpack("<i", packed_id)[0]
 
-    return exeid
+    print(f"Raw bytes: {packed_id.hex()}")
+    print(f"Unpacked (signed): {unpacked_id}")
+    print(f"Original Value (displayed by python): {negative_id}")
+    print(f"Is negative: {negative_id < 0}") #This will now correctly show true
+
+    return negative_id
 
 def fetch_artwork_sgdb(artwork_path, exe_id, app_id, store):
 
@@ -1084,26 +1086,8 @@ def get_icon_from_steam(artwork_path, steam_file_id, app_id, print_status):
         return None
 
 def signed_to_unsigned(signed_int):
-  """
-  Converts a signed integer to an unsigned integer.
-
-  Args:
-    signed_int: The signed integer to convert.
-
-  Returns:
-    The unsigned integer equivalent of the signed integer.
-  """
-
-  # Determine the bit width of the signed integer
-  bit_width = signed_int.bit_length() + 1  # Add 1 for the sign bit
-
-  # Create a mask of all 1s with the same bit width
-  mask = (1 << bit_width) - 1
-
-  # Perform the conversion
-  unsigned_int = signed_int & mask
-
-  return unsigned_int
+    """Converts a signed 32-bit integer to its unsigned representation."""
+    return signed_int & 0xFFFFFFFF
 
 class MainWindow(QWidget):
     def __init__(self):
