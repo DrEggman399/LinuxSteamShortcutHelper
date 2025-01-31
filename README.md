@@ -39,7 +39,7 @@ _Since Steam is launching a .sh file, it does not create a folder in the compatd
 
 ## Roadmap  
 :white_check_mark: Add auto-update of dependencies: umu-database, umu-run  
-:white_check_mark: Remove Steam Web API key requirement ~~(switch to SteamCMD API)~~
+:white_check_mark: Remove Steam Web API key requirement ~~(switch to SteamCMD API)~~  
 :black_square_button: Add support for SteamGridDB for unofficial / non-steam game artwork  
 :black_square_button: Add configuration window  
 :black_square_button: Add support for multiple languages / translations  
