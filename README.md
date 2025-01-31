@@ -1,16 +1,16 @@
 # Linux Steam Shortcut Helper
 _A small PyQt helper application for configuring and quickly adding Non-Steam Shortcuts_
-![A picture of the main application's window](docs/main_window.png)
+![A picture of the application's main window](docs/main_window.png)
 
 ## Introduction
-Linux Steam Shortcut Helper is a small helper application that aids in configuring Non-Steam Shortcuts. It's targetted at SteamOS on the Steam Deck right now; compatibility with other OSs is unknown at this point and is not guaranteed. It primarily relies on UMU-Launcher to provide steam-pressure-vessel support, as well as protonfixes for games.
+Linux Steam Shortcut Helper is a small helper application that aids in configuring Non-Steam Shortcuts. It's targeted at SteamOS on the Steam Deck right now; compatibility with other OSs is unknown at this point and is not guaranteed. It primarily relies on UMU-Launcher to provide steam-pressure-vessel support, as well as protonfixes for games.
 
 ## Usage and Workflow
 The archetypical workflow is as follows:  
 1. Search for Game Title  
 _This will show results in both the UMU database and Steam; if UMU has results, there are probably fixes that will be applied._  
 
-2. Run Installer **Currently Broken**  
+2. ~~Run Installer~~ **Currently Broken**  
 _This will use umu-run to let you run the setup.exe within the new prefix._  
 ***Workaround: can save the script first, using the setup.exe, run, then re-save the script with the game.exe***  
 
@@ -39,8 +39,8 @@ _Since Steam is launching a .sh file, it does not create a folder in the compatd
 
 ## Roadmap  
 :white_check_mark: Add auto-update of dependencies: umu-database, umu-run  
-:black_square_button: Remove Steam Web API key requirement (switch to SteamCMD API)  
+:white_check_mark: Remove Steam Web API key requirement ~~(switch to SteamCMD API)~~
 :black_square_button: Add support for SteamGridDB for unofficial / non-steam game artwork  
 :black_square_button: Add configuration window  
 :black_square_button: Add support for multiple languages / translations  
-:black_square_button: Versioning and Backup for shortcuts.vdf  
+:white_check_mark: Versioning and Backup for shortcuts.vdf  
