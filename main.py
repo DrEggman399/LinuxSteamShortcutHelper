@@ -26,7 +26,6 @@ from PyQt6.QtGui import *
 from PyQt6.QtCore import *
 from steam_web_api import Steam
 from steamgrid import *
-from zipfile import ZipFile
 
 SESSION_ID = None
 
@@ -178,29 +177,33 @@ def update_umu_launcher(config):
         if not assets:
             raise Exception("No assets found in the release")
 
+        umu_run_url = None
         for asset in assets:
-            if asset["name"] == "Zipapp.zip":
+            if "zipapp.tar" in asset["name"].lower():
                 umu_run_url = asset["browser_download_url"]
+                download_filename = asset["name"]
+                break
 
     if not umu_run_url:
-        raise Exception("No download URL found for Zipapp.zip")
+        raise Exception("No download URL found for zipapp.tar containing file")
 
-    if download_file(umu_run_url, 'Zipapp.zip', config['Directories'].get('umuDir'), overwrite=True):
+    if download_file(umu_run_url, download_filename, config['Directories'].get('umuDir'), overwrite=True):
         try:
-            unpack_umu_run(config['Directories'].get('umuDir'))
+            unpack_umu_run(config['Directories'].get('umuDir'), download_filename)
             print("umu-run executable successfully extracted!")
             return data.get("published_at")
         except OSError as e:
             print(f"Error unpacking umu-run: {e}")
     else:
-        raise Exception("Failed to download umu-launcher/Zipapp.zip")
+        raise Exception(f"Failed to download umu-launcher/{download_filename}")
 
-def unpack_umu_run(directory):
+def unpack_umu_run(directory, filename):
     """
-    Unpacks the `umu-run` executable from Zipapp.zip and Zipapp.tar to the given directory.
+    Unpacks the `umu-run` executable from the given .tar file to the given directory and cleans up the tar file.
 
     Args:
         directory: The directory path where the extracted executable should be saved.
+        filename: The name of the tar file downloaded.
 
     Raises:
         OSError: If any issue occurs during extraction.
@@ -209,26 +212,26 @@ def unpack_umu_run(directory):
     if not os.path.exists(directory):
         os.makedirs(directory)
 
-    # Extract Zipapp.zip
-    try:
-        with ZipFile(os.path.join(directory, "Zipapp.zip"), 'r') as zip_ref:
-            zip_ref.extractall(directory)
-    except FileNotFoundError:
-        raise OSError("Zipapp.zip not found")
-    except Exception as e:
-        raise OSError(f"Error extracting Zipapp.zip: {e}")
+    filepath = os.path.join(directory, filename)
 
-    # Extract umu-run from Zipapp.tar
+    # Extract umu-run from .tar
     try:
-        with tarfile.open(os.path.join(directory, "Zipapp.tar"), 'r') as tar_ref:
+        with tarfile.open(filepath, 'r') as tar_ref:
             for member in tar_ref.getmembers():
                 if member.name == "umu-run":
                     tar_ref.extract(member, directory)
                     break
     except FileNotFoundError:
-        raise OSError("Zipapp.tar not found")
+        raise OSError(f"{filename} not found")
     except Exception as e:
-        raise OSError(f"Error extracting umu-run from Zipapp.tar: {e}")
+        raise OSError(f"Error extracting umu-run from {filename}: {e}")
+
+    # Clean up the tar file
+    try:
+        os.remove(filepath)
+        print(f"Successfully removed {filename}")
+    except OSError as e:
+        print(f"Warning: Failed to remove {filename}: {e}")
     
 def download_file(url, filename=None, folder_path=None, overwrite=False):
     """Downloads a file from a URL, optionally saving it to a specified folder.
