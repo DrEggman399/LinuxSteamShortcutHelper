@@ -690,7 +690,7 @@ def add_game_to_steam(main_window, print_status):
 
     #If UMU-ID selected, store the codename for comparison later
     if codename:
-        selected_item = model().itemFromIndex(first_index)
+        selected_item = model.itemFromIndex(first_index)
         codename = selected_item.data(Qt.ItemDataRole.UserRole)
         print_status(f"Selected CODENAME: {codename}")
 
