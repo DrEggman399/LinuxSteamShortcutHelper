@@ -635,8 +635,8 @@ def save_launch_script(main_window):
             command.append(prefix_command)
         if main_window.pass_store_value_checkbox.isChecked() and store_value:
             command.append(f"STORE='{store_value}'")
-        command.append(f"'{umu_run_path}'")
-        command.append(f"'{game_executable_path}'")
+        command.append(f'"{umu_run_path}"')
+        command.append(f'"{game_executable_path}"')
 
     command_string = " ".join(command)
 
