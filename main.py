@@ -218,9 +218,17 @@ def unpack_umu_run(directory, filename):
     try:
         with tarfile.open(filepath, 'r') as tar_ref:
             for member in tar_ref.getmembers():
-                if member.name == "umu-run":
+                if member.name == "umu/umu-run":
+                    target_file = os.path.join(directory, "umu-run")
+                    # Check if the target file exists and delete it if it does
+                    if os.path.exists(target_file):
+                        os.remove(target_file)
+
                     tar_ref.extract(member, directory)
+                    os.rename(os.path.join(directory, "umu/umu-run"), target_file)
+                    os.rmdir(os.path.join(directory, "umu"))
                     break
+
     except FileNotFoundError:
         raise OSError(f"{filename} not found")
     except Exception as e:

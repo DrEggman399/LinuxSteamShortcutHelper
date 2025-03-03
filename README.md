@@ -44,3 +44,4 @@ _Since Steam is launching a .sh file, it does not create a folder in the compatd
 :black_square_button: Add configuration window  
 :black_square_button: Add support for multiple languages / translations  
 :white_check_mark: Versioning and Backup for shortcuts.vdf  
+:black_square_button: Consolidate umu resources into umu directory  
